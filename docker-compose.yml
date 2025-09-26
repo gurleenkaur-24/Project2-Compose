@@ -1,0 +1,47 @@
+version: "3.8"
+
+# Private network for the two containers to talk to each other
+networks:
+  jenkins: {}
+
+# Save data and TLS certificates even if containers restart
+volumes:
+  jenkins-data: {}
+  docker-certs-ca: {}
+  docker-certs-client: {}
+
+services:
+
+  # Docker engine in a container (Docker-in-Docker)
+  dind:
+    image: docker:24-dind             # Docker daemon image
+    privileged: true                  # Needed for DinD to work
+    environment:
+      - DOCKER_TLS_CERTDIR=/certs     # Turn on TLS and store certs in /certs
+    networks:
+      jenkins:
+        aliases:
+          - docker                    # Jenkins will reach it as "docker"
+    volumes:
+      - docker-certs-ca:/certs/ca     # CA certs for the server
+      - docker-certs-client:/certs/client  # Client certs for Jenkins
+      - jenkins-data:/var/jenkins_home     # Optional: share for easy debugging
+
+  # Jenkins server
+  jenkins:
+    image: jenkins/jenkins:lts-jdk11  # Stable Jenkins with Java 11
+    user: root
+    environment:
+      - DOCKER_HOST=tcp://docker:2376 # Address of the DinD engine
+      - DOCKER_CERT_PATH=/certs/client # Where client certs are mounted
+      - DOCKER_TLS_VERIFY=1           # Require TLS (secure)
+    ports:
+      - "8080:8080"                   # Jenkins web UI
+      - "50000:50000"                 # For Jenkins agents (optional)
+    volumes:
+      - jenkins-data:/var/jenkins_home           # Keep Jenkins data
+      - docker-certs-client:/certs/client:ro     # Read-only client certs
+      - /usr/bin/docker:/usr/bin/docker          # Optional: docker CLI inside Jenkins
+    networks:
+      - jenkins
+    restart: unless-stopped           # Auto-start on reboot/crash
