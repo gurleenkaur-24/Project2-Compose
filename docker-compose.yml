@@ -1,17 +1,13 @@
 version: "3.8"
-
 # Private network for the two containers to talk to each other
 networks:
   jenkins: {}
-
 # Save data and TLS certificates even if containers restart
 volumes:
   jenkins-data: {}
   docker-certs-ca: {}
   docker-certs-client: {}
-
 services:
-
   # Docker engine in a container (Docker-in-Docker)
   dind:
     image: docker:24-dind             # Docker daemon image
