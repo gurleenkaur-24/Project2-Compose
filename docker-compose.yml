@@ -1,48 +1,50 @@
-version: "3.8"
+# docker-compose.yml
+# Goal: Run Jenkins with a secure Docker-in-Docker (DinD) service.
+# Named volumes persist Jenkins home and Docker image cache across restarts.
 
-# Private network for the two containers to talk to each other
+# Private network for Jenkins and DinD to communicate
 networks:
   jenkins: {}
 
-# Save data and TLS certificates even if containers restart
+# Named volumes (persist even if containers stop/restart)
 volumes:
-  jenkins-data: {}          # Jenkins home persistence
-  docker-certs-ca: {}
-  docker-certs-client: {}
-  docker-data: {}           # NEW: Docker image layers & build cache
+  jenkins-data: {}          # Jenkins home (jobs, plugins, config)
+  docker-certs-ca: {}       # TLS CA certificates
+  docker-certs-client: {}   # TLS client certificates
+  docker-data: {}           # Docker image layers & build cache for DinD
 
 services:
   # Docker engine in a container (Docker-in-Docker)
   dind:
-    image: docker:24-dind             # Docker daemon image
-    privileged: true                  # Needed for DinD to work
+    image: docker:24-dind
+    privileged: true
     environment:
-      - DOCKER_TLS_CERTDIR=/certs     # Turn on TLS and store certs in /certs
+      - DOCKER_TLS_CERTDIR=/certs     # Enable TLS for secure communication
     networks:
       jenkins:
         aliases:
-          - docker                    # Jenkins will reach it as "docker"
+          - docker                    # Jenkins will reach DinD as "docker"
     volumes:
-      - docker-certs-ca:/certs/ca           # CA certs for the server
-      - docker-certs-client:/certs/client   # Client certs for Jenkins
-      - docker-data:/var/lib/docker         # NEW: persist Docker images/layers/cache
-      - jenkins-data:/var/jenkins_home      # Optional: share for easy debugging
+      - docker-certs-ca:/certs/ca
+      - docker-certs-client:/certs/client
+      - docker-data:/var/lib/docker   # Persist Docker cache
+    restart: unless-stopped
 
   # Jenkins server
   jenkins:
     image: jenkins/jenkins:lts-jdk11  # Stable Jenkins with Java 11
     user: root
     environment:
-      - DOCKER_HOST=tcp://docker:2376   # Address of the DinD engine
-      - DOCKER_CERT_PATH=/certs/client  # Where client certs are mounted
-      - DOCKER_TLS_VERIFY=1             # Require TLS (secure)
+      - DOCKER_HOST=tcp://docker:2376   # Address of the DinD service
+      - DOCKER_CERT_PATH=/certs/client  # TLS client certs
+      - DOCKER_TLS_VERIFY=1             # Enforce secure connection
     ports:
       - "8080:8080"                     # Jenkins web UI
-      - "50000:50000"                   # For Jenkins agents (optional)
+      - "50000:50000"                   # Jenkins agent communication
     volumes:
-      - jenkins-data:/var/jenkins_home          # Persist Jenkins data
-      - docker-certs-client:/certs/client:ro    # Read-only client certs
-      - /usr/bin/docker:/usr/bin/docker         # Optional: docker CLI inside Jenkins
+      - jenkins-data:/var/jenkins_home        # Persist Jenkins data
+      - docker-certs-client:/certs/client:ro  # Read-only TLS client certs
+      - /usr/bin/docker:/usr/bin/docker       # Optional: docker CLI in Jenkins
     networks:
       - jenkins
-    restart: unless-stopped             # Auto-start on reboot/crash
+    restart: unless-stopped
