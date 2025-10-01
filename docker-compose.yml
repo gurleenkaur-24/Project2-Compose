@@ -2,7 +2,6 @@
 services:
   dind:
     image: docker:27-dind
-    container_name: dind
     privileged: true
     environment:
       - DOCKER_TLS_CERTDIR=/certs
@@ -21,7 +20,6 @@ services:
 
   jenkins:
     image: jenkins/jenkins:lts-jdk17
-    container_name: jenkins
     depends_on:
       - dind
     environment:
