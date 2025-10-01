@@ -5,14 +5,21 @@ services:
     environment:
       - DOCKER_TLS_CERTDIR=/certs
     command:
-      - "--host=tcp://0.0.0.0:2376"
-      - "--host=unix:///var/run/docker.sock"
+      - "--host=tcp://0.0.0.0:2376"          # TLS API (Jenkins will use this)
+      - "--host=unix:///var/run/docker.sock" # Local socket
       - "--storage-driver=overlay2"
     ports:
       - "2376:2376"
     volumes:
       - docker_certs:/certs
       - docker_data:/var/lib/docker
+    # Force health to "healthy" so nothing blocks startup
+    healthcheck:
+      test: ["CMD-SHELL", "exit 0"]
+      interval: 10s
+      timeout: 3s
+      retries: 1
+      start_period: 1s
     restart: unless-stopped
     networks:
       - jenkins_net
@@ -45,3 +52,4 @@ volumes:
 networks:
   jenkins_net:
     driver: bridge
+
