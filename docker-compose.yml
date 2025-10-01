@@ -1,28 +1,20 @@
-version: "3.9"
 
 services:
   dind:
     image: docker:27-dind
     container_name: dind
-    privileged: true                         # required by dockerd-in-docker
+    privileged: true
     environment:
-      - DOCKER_TLS_CERTDIR=/certs            # auto-generate TLS certs
+      - DOCKER_TLS_CERTDIR=/certs
     command:
-      - "--host=tcp://0.0.0.0:2376"          # TLS-secured remote API
-      - "--host=unix:///var/run/docker.sock" # local socket for healthcheck/ops
+      - "--host=tcp://0.0.0.0:2376"
+      - "--host=unix:///var/run/docker.sock"
       - "--storage-driver=overlay2"
     ports:
-      - "2376:2376"                          # expose TLS Docker API
+      - "2376:2376"
     volumes:
-      - docker_certs:/certs                  # server+client certs
-      - docker_data:/var/lib/docker          # layer/cache data
-    healthcheck:
-      # Simple & reliable: check dockerd via local Unix socket
-      test: ["CMD-SHELL", "docker -H unix:///var/run/docker.sock version >/dev/null 2>&1 || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      start_period: 40s
+      - docker_certs:/certs
+      - docker_data:/var/lib/docker
     restart: unless-stopped
     networks:
       - jenkins_net
@@ -31,20 +23,19 @@ services:
     image: jenkins/jenkins:lts-jdk17
     container_name: jenkins
     depends_on:
-      dind:
-        condition: service_healthy
+      - dind
     environment:
-      - DOCKER_HOST=tcp://dind:2376          # talk to DinD over TLS
+      - DOCKER_HOST=tcp://dind:2376
       - DOCKER_TLS_VERIFY=1
       - DOCKER_CERT_PATH=/certs/client
       - JAVA_OPTS=-Djenkins.install.runSetupWizard=false
     ports:
-      - "8080:8080"                          # Jenkins UI
-      - "50000:50000"                        # inbound agents
+      - "8080:8080"
+      - "50000:50000"
     volumes:
-      - jenkins_home:/var/jenkins_home       # persist Jenkins state
-      - docker_certs:/certs/client:ro        # client certs (read-only)
-    user: "0"                                 # ensure access to mounted certs
+      - jenkins_home:/var/jenkins_home
+      - docker_certs:/certs/client:ro
+    user: "0"
     restart: unless-stopped
     networks:
       - jenkins_net
