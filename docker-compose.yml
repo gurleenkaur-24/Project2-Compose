@@ -1,4 +1,3 @@
-
 services:
   dind:
     image: docker:27-dind
