@@ -1,69 +1,64 @@
 # Project2-Compose: Jenkins + Docker-in-Docker (DinD) via TLS
-# Purpose:
-# - Run a secure Docker daemon (DinD) inside a container.
-# - Let Jenkins talk to that daemon over TLS to build/run images.
-# - Persist Jenkins data and Docker layer cache using named volumes.
+# - DinD runs a secure Docker daemon and auto-generates TLS certs in /certs
+# - Jenkins talks to DinD over TLS using those client certs
+# - Named volumes persist Jenkins data and Docker layer cache
 
 name: project2-compose
 
 services:
-  # -----------------------------
-  # Docker-in-Docker (DinD) node
-  # -----------------------------
+  # Docker daemon inside a container (DinD)
   dind:
-    image: docker:26-dind                    # Container image that runs 'dockerd'
+    image: docker:26-dind
     container_name: project2-compose-dind
-    privileged: true                         # Required so the Docker daemon can start inside the container
+    privileged: true
     environment:
-      - DOCKER_TLS_CERTDIR=/certs            # Instructs dockerd to auto-create TLS server/client certs under /certs
+      - DOCKER_TLS_CERTDIR=/certs            # tells dockerd to create TLS certs under /certs
     command:
-      - --host=tcp://0.0.0.0:2376            # Listen on TLS port 2376 (ONLY inside the compose network; not published)
-      - --host=unix:///var/run/docker.sock   # Keep local UNIX socket for healthcheck/maintenance
-      - --storage-driver=overlay2            # Recommended layered FS driver on Linux
+      - --host=tcp://0.0.0.0:2376            # TLS daemon endpoint (not published outside the network)
+      - --host=unix:///var/run/docker.sock   # keep local unix socket for healthcheck
+      - --storage-driver=overlay2
     volumes:
-      - docker_cache:/var/lib/docker         # Named volume for image layers (speeds repeated builds)
-      - docker_certs:/certs                  # Share generated TLS certs so Jenkins can read client certs
+      - docker_cache:/var/lib/docker         # Docker layer cache (speeds builds)
+      - docker_certs:/certs                  # shares TLS certs with Jenkins
     networks:
-      - jenkins                              # Private network so 'jenkins' reaches 'dind' by service name
+      jenkins:
+        aliases:
+          - docker                           # cert SAN includes "docker" -> clients should use this hostname
     healthcheck:
-      test: ["CMD", "docker", "info"]        # Healthy when 'docker info' succeeds
+      test: ["CMD", "docker", "info"]
       interval: 10s
       timeout: 5s
       retries: 5
-    restart: unless-stopped                  # Auto-restart on failure/host reboot
+    restart: unless-stopped
 
-  # -----------------------------
-  # Jenkins controller
-  # -----------------------------
+  # Jenkins controller with Docker CLI inside
   jenkins:
     build:
-      context: ./jenkins                     # Dockerfile adds Docker CLI (+ compose plugin) into Jenkins image
+      context: ./jenkins                     # Dockerfile copies docker CLI + compose plugin in
     container_name: project2-compose-jenkins
     ports:
-      - "8080:8080"                          # Jenkins Web UI
-      - "50000:50000"                        # Inbound agent port (JNLP)
+      - "8080:8080"                          # Jenkins UI
+      - "50000:50000"                        # Inbound agent port
     environment:
-      - DOCKER_HOST=tcp://dind:2376          # Docker CLI target (the DinD daemon)
-      - DOCKER_TLS_VERIFY=1                  # Enforce TLS for the Docker client connection
-      - DOCKER_CERT_PATH=/certs/client       # Where client certs are mounted in this container
-      - JENKINS_OPTS=--prefix=/              # (Optional) base path for Jenkins; '/' by default
-      - JAVA_OPTS=-Xms256m -Xmx512m          # JVM heap sizing to avoid OOM on small hosts
+      - DOCKER_HOST=tcp://docker:2376        # talk to DinD using the alias that matches the cert
+      - DOCKER_TLS_VERIFY=1                  # enforce TLS
+      - DOCKER_CERT_PATH=/certs/client       # correct path (contains ca.pem, cert.pem, key.pem)
+      - JENKINS_OPTS=--prefix=/
+      - JAVA_OPTS=-Xms256m -Xmx512m
     volumes:
-      - jenkins_home:/var/jenkins_home       # Persist Jenkins config, jobs, plugins, secrets
-      - docker_certs:/certs:ro               # Mount TLS certs read-only; includes /certs/client/* for Docker CLI
+      - jenkins_home:/var/jenkins_home       # persist jobs/config/plugins
+      - docker_certs:/certs:ro               # mount TLS certs read-only
     depends_on:
       dind:
-        condition: service_healthy           # Start after DinD is ready
+        condition: service_healthy
     networks:
       - jenkins
-    restart: unless-stopped                  # Auto-restart on failure/host reboot
+    restart: unless-stopped
 
-# Isolated network for Jenkins<->DinD traffic
 networks:
   jenkins:
 
-# Named volumes that persist across container recreations
 volumes:
-  jenkins_home:                              # Jenkins HOME data
-  docker_cache:                              # Docker image/layer cache for DinD
-  docker_certs:                              # TLS certs shared between DinD and Jenkins
+  jenkins_home:   # Jenkins HOME data
+  docker_cache:   # Docker image/layer cache
+  docker_certs:   # TLS certs shared between DinD and Jenkins
