@@ -1,13 +1,15 @@
 pipeline {
   agent {
-    // Run all stages inside a Node 16 container
-    docker { image 'node:16' }
+    docker {
+      image 'node:16'
+      args '-u root:root'
+    }
   }
-  options { timestamps() }
   stages {
-    stage('Node version') {
+    stage('Verify Node') {
       steps {
-        sh 'node -v && npm -v'
+        sh 'node -v'
+        sh 'npm -v'
       }
     }
   }
