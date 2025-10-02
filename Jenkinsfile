@@ -1,117 +1,69 @@
 /**
- * Jenkinsfile (Task 3)
- * - Builds & runs a simple container using DinD over TLS.
- * - Security integration:
- *    1) Least-privilege: run this pipeline as the non-admin 'pipeline' user you created.
- *       (No admin perms required: only Job Build/Read/Discover/Cancel + Run/View Read.)
- *    2) No secret leakage: all secret use (e.g., Docker Hub login) is wrapped in withCredentials and echo is sanitized.
- *    3) Safe Docker connection: uses TLS to 'docker' alias with client certs mounted read-only by Compose.
+ * Jenkinsfile — Task 3 (agent = Node 16)
+ * Runs the pipeline inside a Node 16 Docker container built from JenkinsAgent.Dockerfile.
+ * Safe defaults: no concurrent runs, log retention, and no secrets echoed.
  */
 
 pipeline {
-  agent any
+  agent {
+    // Build and use the Node 16 agent defined in JenkinsAgent.Dockerfile
+    dockerfile {
+      filename 'JenkinsAgent.Dockerfile'
+      // Keep the workspace when the container exits so artifacts/logs persist
+      reuseNode true
+      // You usually don't need extra args; add --user root if your repo needs root writes
+      // args '--user root'
+    }
+  }
+
   options {
     timestamps()
     ansiColor('xterm')
-    disableConcurrentBuilds() // avoids overlapping runs
-    buildDiscarder(logRotator(numToKeepStr: '15')) // log retention hygiene
-    skipDefaultCheckout(true) // we control checkout stage explicitly
-  }
-
-  environment {
-    // Matches your Compose TLS setup (DinD alias + client certs)
-    DOCKER_HOST = "tcp://docker:2376"
-    DOCKER_TLS_VERIFY = "1"
-    DOCKER_CERT_PATH = "/certs/client"
-    // Optional flag to enable pushing to Docker Hub without editing file
-    PUBLISH = "${params.PUBLISH ?: 'false'}"
-  }
-
-  parameters {
-    booleanParam(name: 'PUBLISH', defaultValue: false, description: 'Push image to Docker Hub (requires credentials id "dockerhub")')
+    disableConcurrentBuilds()
+    buildDiscarder(logRotator(numToKeepStr: '15'))
+    skipDefaultCheckout(true)
   }
 
   stages {
     stage('Checkout') {
       steps {
         checkout scm
-        sh 'echo "Checked out commit: $(git rev-parse --short HEAD)"'
+        sh 'echo "Checked out $(git rev-parse --short HEAD)"'
       }
     }
 
-    stage('Docker sanity (TLS)') {
+    stage('Node toolchain') {
       steps {
-        sh '''
-          set -e
-          docker version
-          docker info | head -n 20
-        '''
+        sh 'node -v && npm -v'
       }
     }
 
-    stage('Prepare Dockerfile (if missing)') {
+    // These steps only run if package.json exists (works even if your repo isn’t a Node app)
+    stage('Install deps') {
+      when { expression { fileExists("package.json") } }
       steps {
-        sh '''
-          if [ ! -f Dockerfile ]; then
-            cat > Dockerfile <<'EOF'
-FROM alpine:3.20
-RUN echo "Hello from Task3 build at $(date)" > /hello.txt
-CMD ["cat","/hello.txt"]
-EOF
-            echo "Created minimal Dockerfile."
-          else
-            echo "Using existing Dockerfile."
-          fi
-          head -n 20 Dockerfile || true
-        '''
+        sh 'npm ci || npm install'
       }
     }
 
-    stage('Build image') {
+    stage('Test') {
+      when { expression { fileExists("package.json") } }
       steps {
-        sh '''
-          set -e
-          IMAGE="task3/app:${BUILD_NUMBER}"
-          echo "$IMAGE" > image.txt
-          docker build -t "$IMAGE" .
-        '''
+        sh 'npm test --if-present'
       }
     }
 
-    stage('Run container (smoke test)') {
+    stage('Build') {
+      when { expression { fileExists("package.json") } }
       steps {
-        sh 'docker run --rm $(cat image.txt)'
-      }
-    }
-
-    // Optional secure push — only runs when PUBLISH=true and credentials exist.
-    stage('Push to Docker Hub (Optional, secured)') {
-      when { expression { return env.PUBLISH?.toLowerCase() == 'true' } }
-      steps {
-        withCredentials([usernamePassword(credentialsId: 'dockerhub', usernameVariable: 'DHU', passwordVariable: 'DHP')]) {
-          sh '''
-            set -e
-            IMAGE_LOCAL="$(cat image.txt)"
-            IMAGE_REMOTE="${DHU}/task3-app:${BUILD_NUMBER}"
-
-            # Avoid leaking the token: never echo $DHP and disable command echo during login
-            set +x
-            echo "$DHP" | docker login -u "$DHU" --password-stdin
-            set -x
-
-            docker tag "$IMAGE_LOCAL" "$IMAGE_REMOTE"
-            docker push "$IMAGE_REMOTE"
-            docker logout
-          '''
-        }
+        sh 'npm run build --if-present'
       }
     }
   }
 
   post {
-    success { echo 'Build OK' }
     always {
-      archiveArtifacts artifacts: 'Dockerfile,image.txt', onlyIfSuccessful: false
+      archiveArtifacts artifacts: 'package*.json,**/npm-debug.log', onlyIfSuccessful: false
       echo 'Pipeline finished.'
     }
   }
