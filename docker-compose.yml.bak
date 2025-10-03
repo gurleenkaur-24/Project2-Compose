@@ -1,0 +1,22 @@
+version: '3.8'
+services:
+  docker:
+    imageL docker:dind
+    privileged: true
+    networks:
+      - jenkins
+    environment:
+      - DOCKER_TLS_CERTDIR=/certs
+    volumes:
+      - docker-certs-ca:/certs/ca
+      - docker-certs-client:/certs/client
+      - jenkins-data:/var/jenkins_home
+
+  jenkins:
+    image: jenkins/jenkins:lts-jdk11
+    restart: unless-stopped
+    user: root
+    networks:
+      - jenkins
+    environment:
+      - 
